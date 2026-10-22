@@ -1,0 +1,19 @@
+# PLACEHOLDERS ONLY: these values are not Telegram-safe recommendations.
+max_wait_seconds: 5
+rpc_timeout_seconds: 30
+queue_capacity: 16
+limits:
+  global: {minute: 10, hour: 100, day: 500}
+  default: {minute: 5, hour: 50, day: 200}
+  operations:
+    internal: {minute: 5, hour: 50, day: 200}
+    session_check: {minute: 5, hour: 50, day: 200}
+    list_dialogs: { minute: 3, hour: 30, day: 100 }
+    get_message: { minute: 5, hour: 50, day: 200 }
+    search_chat: { minute: 5, hour: 50, day: 200 }
+cooldown:
+  window_seconds: 60
+  tiers:
+    - {requests: 3, seconds: 2}
+    - {requests: 5, seconds: 10}
+    - {requests: 8, seconds: 30}

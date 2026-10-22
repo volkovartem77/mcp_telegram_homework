@@ -1,0 +1,12 @@
+list_dialogs:
+  default_limit: 50
+  max_limit: 50
+search_chat:
+  default_limit: 20
+  max_limit: 50
+get_replies:
+  default_limit: 20
+  max_limit: 50
+read_around:
+  default_limit: 20
+  max_limit: 50

@@ -1,0 +1,40 @@
+# Virtual environments
+.venv/
+venv/
+
+# Secrets and Telegram sessions
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.session
+*.session-*
+
+# SQLite databases and sidecar files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Python build artifacts and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Logs and local editor state
+*.log
+*.log.*
+logs/
+.idea/
+.DS_Store
