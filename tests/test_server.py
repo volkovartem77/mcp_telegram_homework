@@ -1,14 +1,22 @@
-"""Smoke test for MCP initialization without Telegram access."""
+"""MCP initialization test with an entirely fake session owner."""
 
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from fastmcp import Client
 
-from telegram_mcp.server import mcp
+from telegram_mcp.server import create_server
 
 
 class ServerSmokeTest(unittest.IsolatedAsyncioTestCase):
-    async def test_server_initializes_without_tools(self) -> None:
-        async with Client(mcp) as client:
-            self.assertTrue(await client.ping())
-            self.assertEqual(await client.list_tools(), [])
+    async def test_server_initializes_with_five_tools(self) -> None:
+        @asynccontextmanager
+        async def fake_session():
+            yield SimpleNamespace()
+
+        with patch("socket.socket.connect", side_effect=AssertionError("Network forbidden in tests")):
+            async with Client(create_server(fake_session)) as client:
+                self.assertTrue(await client.ping())
+                self.assertEqual({tool.name for tool in await client.list_tools()}, {"list_dialogs", "get_message", "search_chat", "get_replies", "read_around"})

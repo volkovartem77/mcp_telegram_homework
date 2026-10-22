@@ -35,16 +35,17 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_existing_session_requests_no_input_or_code(self) -> None:
         self.client.is_user_authorized = AsyncMock(return_value=True)
-        with patch.object(login, "read_secret") as prompt:
+        with patch("builtins.input") as prompt, patch.object(login, "getpass") as password:
             result = await login.authenticate(self.client, 123, "a" * 32)
         self.assertIn("Existing", result)
         prompt.assert_not_called()
+        password.assert_not_called()
         self.client.assert_not_awaited()
         self.client.sign_in.assert_not_awaited()
         self.client.session.save.assert_not_called()
 
     async def test_code_login_saves_session(self) -> None:
-        with patch.object(login, "read_secret", side_effect=["+15555550123", "12345"]):
+        with patch("builtins.input", side_effect=["+15555550123", "12345"]):
             result = await login.authenticate(self.client, 123, "a" * 32)
         self.assertIn("successful", result)
         self.client.assert_awaited_once()
@@ -55,7 +56,10 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_two_factor_login(self) -> None:
         self.client.sign_in.side_effect = [errors.SessionPasswordNeededError(None), None]
-        with patch.object(login, "read_secret", side_effect=["+15555550123", "12345", "test-password"]):
+        with (
+            patch("builtins.input", side_effect=["+15555550123", "12345"]),
+            patch.object(login, "getpass", return_value="test-password"),
+        ):
             await login.authenticate(self.client, 123, "a" * 32)
         self.assertEqual(self.client.sign_in.await_count, 2)
         self.client.sign_in.assert_awaited_with(password="test-password")
@@ -63,7 +67,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_code_request_failure_is_not_retried(self) -> None:
         self.client.side_effect = errors.AuthRestartError(None)
-        with patch.object(login, "read_secret", return_value="+15555550123"):
+        with patch("builtins.input", return_value="+15555550123"):
             with self.assertRaises(errors.AuthRestartError):
                 await login.authenticate(self.client, 123, "a" * 32)
         self.client.assert_awaited_once()
@@ -71,7 +75,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_code_is_not_retried(self) -> None:
         self.client.sign_in.side_effect = errors.PhoneCodeInvalidError(None)
-        with patch.object(login, "read_secret", side_effect=["+15555550123", "12345"]):
+        with patch("builtins.input", side_effect=["+15555550123", "12345"]):
             with self.assertRaises(errors.PhoneCodeInvalidError):
                 await login.authenticate(self.client, 123, "a" * 32)
         self.client.assert_awaited_once()
@@ -79,7 +83,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
         self.client.session.save.assert_not_called()
 
     async def test_empty_code_cannot_trigger_another_code_request(self) -> None:
-        with patch.object(login, "getpass", side_effect=["+15555550123", ""]):
+        with patch("builtins.input", side_effect=["+15555550123", ""]):
             with self.assertRaises(ValueError):
                 await login.authenticate(self.client, 123, "a" * 32)
         self.client.assert_awaited_once()
@@ -87,7 +91,7 @@ class AuthenticationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_final_authorization_is_not_success(self) -> None:
         self.client.is_user_authorized = AsyncMock(return_value=False)
-        with patch.object(login, "read_secret", side_effect=["+15555550123", "12345"]):
+        with patch("builtins.input", side_effect=["+15555550123", "12345"]):
             with self.assertRaises(RuntimeError):
                 await login.authenticate(self.client, 123, "a" * 32)
         self.client.session.save.assert_not_called()
@@ -142,16 +146,62 @@ class InputAndOutputTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     login.load_credentials()
 
-    def test_insecure_input_fallback_is_rejected(self) -> None:
+    def test_hidden_password_does_not_use_visible_input(self) -> None:
+        output = io.StringIO()
+        with (
+            patch.object(login, "getpass", return_value="test-password"),
+            patch("builtins.input") as visible_input,
+            redirect_stdout(output), redirect_stderr(output),
+        ):
+            self.assertEqual(login.read_password(), "test-password")
+        visible_input.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
+
+    def test_password_fallback_warns_before_reading(self) -> None:
         import warnings
 
-        def fallback(prompt):
-            warnings.warn("Cannot hide input", login.GetPassWarning)
-            self.fail("Must not read echoed input")
+        output = io.StringIO()
 
-        with patch.object(login, "getpass", side_effect=fallback):
-            with self.assertRaises(login.GetPassWarning):
-                login.read_secret("Hidden: ")
+        def unavailable(prompt):
+            warnings.warn("Cannot hide input", login.GetPassWarning)
+            self.fail("getpass must not read using its own echoing fallback")
+
+        def visible_input(prompt):
+            self.assertIn("password may be visible on screen", output.getvalue())
+            return "test-password"
+
+        with (
+            patch.object(login, "getpass", side_effect=unavailable),
+            patch("builtins.input", side_effect=visible_input) as fallback,
+            redirect_stdout(output), redirect_stderr(output),
+        ):
+            self.assertEqual(login.read_password(), "test-password")
+        fallback.assert_called_once()
+        self.assertNotIn("test-password", output.getvalue())
+
+    def test_empty_password_is_rejected_in_both_modes(self) -> None:
+        for hidden in (True, False):
+            with (
+                self.subTest(hidden=hidden),
+                patch.object(login, "getpass", return_value="", side_effect=(
+                    None if hidden else login.GetPassWarning("Cannot hide input")
+                )),
+                patch("builtins.input", return_value=""),
+                redirect_stderr(io.StringIO()),
+            ):
+                with self.assertRaises(ValueError):
+                    login.read_password()
+
+    def test_password_cancellation_does_not_fall_back(self) -> None:
+        for failure in (EOFError(), KeyboardInterrupt()):
+            with (
+                self.subTest(failure=type(failure).__name__),
+                patch.object(login, "getpass", side_effect=failure),
+                patch("builtins.input") as fallback,
+            ):
+                with self.assertRaises(type(failure)):
+                    login.read_password()
+                fallback.assert_not_called()
 
     def test_errors_are_sanitized(self) -> None:
         failures = [

@@ -12,13 +12,20 @@ from dotenv import dotenv_values
 from telethon import TelegramClient, errors, functions, types, utils
 
 from telegram_mcp.paths import PROJECT_ROOT, SESSION_PATH
+from telegram_mcp.session_lock import SessionLock
 
 
-def read_secret(prompt: str) -> str:
-    """Refuse getpass's echoing fallback when no secure terminal is available."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", GetPassWarning)
-        value = getpass(prompt)
+def read_password() -> str:
+    """Prefer hidden input, warning before falling back to visible input."""
+    prompt = "Two-step verification password: "
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GetPassWarning)
+            value = getpass(prompt)
+    except GetPassWarning:
+        print("Warning: hidden input is unavailable. Your password may be visible on screen.",
+              file=sys.stderr, flush=True)
+        value = input(prompt)
     if not value.strip():
         raise ValueError("Empty authentication input")
     return value
@@ -48,7 +55,7 @@ async def authenticate(client: TelegramClient, api_id: int, api_hash: str) -> st
     if await client.is_user_authorized():
         return "Existing Telegram session is authorized. No login code requested."
 
-    phone = utils.parse_phone(read_secret("Phone number (international format, hidden): "))
+    phone = utils.parse_phone(input("Phone number (international format): "))
     if not phone:
         raise ValueError("Invalid phone number")
     # The high-level helper retries AuthRestartError internally. Send only once.
@@ -58,11 +65,13 @@ async def authenticate(client: TelegramClient, api_id: int, api_hash: str) -> st
     ))
     if not isinstance(sent, types.auth.SentCode):
         raise RuntimeError("Unsupported login response")
-    code = read_secret("Telegram login code (hidden): ").strip()
+    code = input("Telegram login code: ").strip()
+    if not code:
+        raise ValueError("Empty authentication input")
     try:
         await client.sign_in(phone=phone, code=code, phone_code_hash=sent.phone_code_hash)
     except errors.SessionPasswordNeededError:
-        password = read_secret("Two-step verification password (hidden): ")
+        password = read_password()
         await client.sign_in(password=password)
 
     if not await client.is_user_authorized():
@@ -72,6 +81,12 @@ async def authenticate(client: TelegramClient, api_id: int, api_hash: str) -> st
 
 
 async def run_login() -> str:
+    """Hold the same ownership lock used by the non-interactive client."""
+    with SessionLock(SESSION_PATH):
+        return await _run_login()
+
+
+async def _run_login() -> str:
     """Open the persistent session and always disconnect after the attempt."""
     api_id, api_hash = load_credentials()
     previous_umask = os.umask(0o077)
@@ -112,8 +127,6 @@ def main() -> int:
         return 0
     except (KeyboardInterrupt, EOFError):
         message = "Authentication cancelled. No automatic retry was made."
-    except GetPassWarning:
-        message = "Authentication requires a terminal that supports hidden input."
     except errors.FloodWaitError:
         message = "Telegram rate limit reached. Stop and wait before manually trying again."
     except (errors.PhoneCodeInvalidError, errors.PhoneCodeExpiredError):

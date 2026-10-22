@@ -8,9 +8,10 @@ version = "0.1.0"
 description = "A local Telegram MCP server for deterministic research."
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "Telethon>=1.42,<2",
+    "Telethon==1.45.0",
     "fastmcp>=3,<4",
     "python-dotenv>=1,<2",
+    "PyYAML==6.0.3",
 ]
 
 [project.scripts]
