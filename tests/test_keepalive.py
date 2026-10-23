@@ -23,6 +23,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.now = 100000.0
         config = load_limits(PROJECT_ROOT / "rate_limits.yaml")
+        config["auto_waiting_max"] = 5
         config["cooldown"]["tiers"] = []
         self.state = RpcState(Path(self.temp.name) / "operations.sqlite3", config, lambda: self.now)
         self.send = AsyncMock(return_value=None)
@@ -43,7 +44,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
             self.state.db.execute("UPDATE state SET cooldown=?", (self.now + 10,))
 
     def ping(self, identifier=41):
-        MTProtoSender._keepalive_ping(self.sender, identifier)
+        self.owner._keepalive_ping(identifier)
 
     async def settle(self):
         await self.executor.queue.join()
@@ -163,3 +164,49 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.sender._start_reconnect.assert_not_called()
         self.assertEqual(self.audit(), [("internal", "PingRequest", "ok", None)] * 2)
         self.assertEqual(self.send.await_count, 2)
+
+    async def test_automatic_wait_crossing_tick_does_not_reconnect_or_duplicate_ping(self):
+        self.sender.send = self.owner._intercept
+        self.state.config["auto_waiting_max"] = 60
+        self.block_locally()
+        waiting, release = asyncio.Event(), asyncio.Event()
+
+        async def wait(seconds):
+            waiting.set()
+            await release.wait()
+            self.now += seconds
+
+        self.executor.sleep = wait
+        self.ping()
+        await waiting.wait()
+        # A heartbeat tick while the first ping is queued must not reconnect.
+        self.ping(42)
+        self.sender._start_reconnect.assert_not_called()
+        self.assertEqual(self.executor.pending, 1)
+        self.send.assert_not_awaited()
+        release.set()
+        await self.settle()
+        self.assertEqual(self.audit(), [("internal", "PingRequest", "ok", None)])
+        self.assertEqual(self.state.db.execute("SELECT wait_seconds FROM rpc_audit").fetchone()[0], 10)
+        # Once dispatch finishes, genuine missing-pong behavior is unchanged.
+        self.ping(43)
+        self.sender._start_reconnect.assert_called_once_with(None)
+
+    async def test_pending_ping_without_pong_still_hits_rpc_timeout_and_halts(self):
+        self.sender.send = self.owner._intercept
+        self.state.config["rpc_timeout_seconds"] = 0.01
+        dispatched = asyncio.Event()
+
+        async def no_pong(*args, **kwargs):
+            dispatched.set()
+            await asyncio.Event().wait()
+
+        self.send.side_effect = no_pong
+        self.ping()
+        await dispatched.wait()
+        self.ping(42)
+        self.sender._start_reconnect.assert_not_called()
+        await self.settle()
+        self.assertTrue(self.state.halted())
+        self.assertEqual(self.audit(), [("internal", "PingRequest", "error", "TimeoutError")])
+        self.send.assert_awaited_once()

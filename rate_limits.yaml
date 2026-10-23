@@ -1,5 +1,9 @@
 # PLACEHOLDERS ONLY: these values are not Telegram-safe recommendations.
-max_wait_seconds: 5
+# Maximum automatic wait (seconds) before a Telegram RPC.
+# Keep below the Hermes MCP tool-call timeout with a safety margin
+# for RPC execution and transport overhead. Check the actual Hermes
+# timeout before increasing this value; do not assume a universal maximum.
+auto_waiting_max: 60
 rpc_timeout_seconds: 30
 queue_capacity: 16
 limits:

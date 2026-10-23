@@ -158,7 +158,8 @@ configured default. Startup, session checks, and internal keepalives consume
 quota separately from tool-linked RPCs. Result page sizes do not multiply native
 RPC counts; multi-step root resolution does.
 
-Short waits may execute within `max_wait_seconds`. Longer estimated waits return
+`auto_waiting_max` (currently 60 seconds) is the sole automatic queue/limiter-wait
+budget per RPC. Waits within it execute internally; longer estimated waits return
 `rate_limited` with `estimated_wait_seconds`, `retry_after` (seconds), and UTC
 `retry_at`. Wait at least that long before deciding whether to retry; estimates
 can change with other agents' activity. FloodWait preserves Telegram's full

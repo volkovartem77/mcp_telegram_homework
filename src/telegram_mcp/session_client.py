@@ -5,6 +5,7 @@ import asyncio
 
 from dotenv import dotenv_values
 from telethon import TelegramClient, functions, utils
+from telethon.network.mtprotosender import MTProtoSender
 from telethon.tl.tlobject import TLRequest
 
 from telegram_mcp.paths import PROJECT_ROOT, SESSION_PATH
@@ -39,6 +40,7 @@ class SessionClient:
         self.config_path = config_path or PROJECT_ROOT / "rate_limits.yaml"
         self.lock = SessionLock(session_path)
         self.state = self.executor = self._client = None
+        self._keepalive_future = None
         self.ready = False
 
     async def __aenter__(self):
@@ -69,6 +71,7 @@ class SessionClient:
                 raise SessionUnavailable("Telegram session is unauthorized; run scripts/login.py manually")
             self.executor = RpcExecutor(self.state, self._client._sender.send)
             self._client._sender.send = self._intercept
+            self._client._sender._keepalive_ping = self._keepalive_ping
             await self._client.connect()
             # A raw authenticated RPC avoids is_user_authorized swallowing RPC errors.
             token = OPERATION.set("session_check")
@@ -98,11 +101,17 @@ class SessionClient:
                 raise
             raise RuntimeError("Telegram session initialization failed; manual recovery required") from None
 
+    def _keepalive_ping(self, ping_id):
+        """Do not declare a missing pong while its accounted ping is still pending."""
+        if self._keepalive_future is None or self._keepalive_future.done():
+            MTProtoSender._keepalive_ping(self._client._sender, ping_id)
+
     def _intercept(self, request, ordered=False):
         """Keep Telethon's ping marker consistent with local pre-dispatch rejection."""
         future = self.executor.intercept(request, ordered=ordered)
         sender = self._client._sender
         if isinstance(request, functions.PingRequest) and sender._ping == request.ping_id:
+            self._keepalive_future = future
             def clear_unsent_ping(done):
                 if done.cancelled():
                     return

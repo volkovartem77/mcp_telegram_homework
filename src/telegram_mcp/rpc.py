@@ -34,11 +34,13 @@ WINDOWS = {"minute": 60, "hour": 3600, "day": 86400}
 def load_limits(path):
     with open(path) as file:
         config = yaml.safe_load(file)
+    if "max_wait_seconds" in config:
+        raise ValueError("max_wait_seconds is no longer supported; use auto_waiting_max")
     def number(value, minimum=0):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < minimum:
             raise ValueError("Invalid rate limit configuration")
-    for key in ("max_wait_seconds", "rpc_timeout_seconds", "queue_capacity"):
-        number(config[key], 0 if key == "max_wait_seconds" else 1)
+    for key in ("auto_waiting_max", "rpc_timeout_seconds", "queue_capacity"):
+        number(config[key], 0 if key == "auto_waiting_max" else 1)
     if not isinstance(config["queue_capacity"], int):
         raise ValueError("Queue capacity must be an integer")
     limits = config["limits"]
@@ -288,7 +290,7 @@ class RpcExecutor:
             pass  # In-memory latch remains set even if durable storage is unavailable.
 
     def _excessive_wait(self, queued, wait):
-        budget = self.state.config["max_wait_seconds"]
+        budget = self.state.config["auto_waiting_max"]
         if budget == 0:
             # Admission has already rejected occupied queues. Never sleep for limits.
             return wait > 0
@@ -323,7 +325,7 @@ class RpcExecutor:
             wait += self.pending * self.state.config["rpc_timeout_seconds"]
             if self.state.halted():
                 raise self.rejection("halted")
-            if wait > self.state.config["max_wait_seconds"] or self.queue.full():
+            if wait > self.state.config["auto_waiting_max"] or self.queue.full():
                 raise self.rejection("rate_limited", wait)
             self.queue.put_nowait((request, ordered, operation, OPERATION_ID.get(), self.state.clock(), future))
             self.pending += 1
