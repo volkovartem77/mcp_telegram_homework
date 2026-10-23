@@ -68,7 +68,7 @@ class SessionClient:
             if not self._client.session.auth_key:
                 raise SessionUnavailable("Telegram session is unauthorized; run scripts/login.py manually")
             self.executor = RpcExecutor(self.state, self._client._sender.send)
-            self._client._sender.send = self.executor.intercept
+            self._client._sender.send = self._intercept
             await self._client.connect()
             # A raw authenticated RPC avoids is_user_authorized swallowing RPC errors.
             token = OPERATION.set("session_check")
@@ -97,6 +97,26 @@ class SessionClient:
             if isinstance(exc, asyncio.CancelledError):
                 raise
             raise RuntimeError("Telegram session initialization failed; manual recovery required") from None
+
+    def _intercept(self, request, ordered=False):
+        """Keep Telethon's ping marker consistent with local pre-dispatch rejection."""
+        future = self.executor.intercept(request, ordered=ordered)
+        sender = self._client._sender
+        if isinstance(request, functions.PingRequest) and sender._ping == request.ping_id:
+            def clear_unsent_ping(done):
+                if done.cancelled():
+                    return
+                exc = done.exception()
+                # A Telegram FloodWait also returns rate_limited, but has an error
+                # code and an audited dispatch. Leave sent-ping failure detection intact.
+                if (isinstance(exc, RpcRejected)
+                        and exc.result.get("status") == "rate_limited"
+                        and "error" not in exc.result
+                        and sender._ping == request.ping_id):
+                    sender._ping = None
+
+            future.add_done_callback(clear_unsent_ping)
+        return future
 
     async def execute(self, operation, request):
         if not self.ready:
