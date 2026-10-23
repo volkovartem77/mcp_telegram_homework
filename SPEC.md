@@ -96,6 +96,8 @@ Telethon marks keepalive pings outstanding before calling `sender.send`. The ses
 
 A keepalive tick also skips scheduling/reconnect while its previous accounted ping Future is unfinished, because automatic waiting can span a heartbeat interval. Dispatched pings remain bounded by `rpc_timeout_seconds`; missing pongs still time out and latch HALTED rather than being hidden by this guard.
 
+For internal account/channel difference requests only, the client translates a local pre-dispatch `rate_limited` rejection without a Telegram error code into `ValueError`, which pinned Telethon 1.45.0 already handles by deferring update processing instead of disconnecting. This adds no replay or retry loop and leaves quotas/accounting unchanged. Tool-scoped rejections, other requests, HALTED, dispatched FloodWaits, and genuine failures retain their existing handling. Mocked tests run Telethon's real update loop to reproduce the original disconnect and verify hourly/daily exhaustion for both difference request types.
+
 Session reuse, `list_dialogs`, and `get_message` have passed a minimal live check. `search_chat` passed one authorized live search for `селедка` on 2026-10-22, returning one page of 20 messages with linked MCP/RPC audits; no continuation was fetched. Reply metadata and `get_replies` passed one authorized live scenario on 2026-10-22: first metadata-bearing result 378872, one root plus four native replies, all operations audited; completeness remains explicitly unguaranteed. Tests use a mocked lifespan with network guards. `read_around` and deployment integration remain unimplemented.
 
 ### MCP Invocation Audit and Error Classification

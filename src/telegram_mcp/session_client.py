@@ -18,6 +18,20 @@ class SessionUnavailable(RuntimeError):
 
 
 class _Client(TelegramClient):
+    async def _call(self, sender, request, ordered=False, flood_sleep_threshold=None):
+        try:
+            return await super()._call(sender, request, ordered, flood_sleep_threshold)
+        except RpcRejected as exc:
+            if (OPERATION.get() == "internal"
+                    and isinstance(request, (functions.updates.GetDifferenceRequest,
+                                             functions.updates.GetChannelDifferenceRequest))
+                    and exc.result.get("status") == "rate_limited"
+                    and "error" not in exc.result):
+                # Telethon 1.45 defers difference processing on ValueError; an
+                # unrecognized RpcRejected instead reaches its fatal disconnect.
+                raise ValueError("Background updates deferred by local rate limit") from None
+            raise
+
     async def start(self, *args, **kwargs):
         raise RuntimeError("Interactive login is prohibited")
 
