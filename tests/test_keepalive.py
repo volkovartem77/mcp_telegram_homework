@@ -129,7 +129,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.audit(), [("keepalive", "PingRequest", "flood_wait", "FloodWaitError")])
         self.send.assert_awaited_once()
 
-    async def test_connection_failure_still_halts_without_retry(self):
+    async def test_connection_failure_halts_without_recovery_handler(self):
         self.sender.send = self.owner._intercept
         self.send.side_effect = ConnectionError("Synthetic disconnected transport")
         self.ping()

@@ -55,6 +55,7 @@ class SessionClient:
         self.lock = SessionLock(session_path)
         self.state = self.executor = self._client = None
         self._keepalive_future = None
+        self._scheduling_keepalive = False
         self.ready = False
 
     async def __aenter__(self):
@@ -83,7 +84,8 @@ class SessionClient:
             self.path.chmod(0o600)
             if not self._client.session.auth_key:
                 raise SessionUnavailable("Telegram session is unauthorized; run scripts/login.py manually")
-            self.executor = RpcExecutor(self.state, self._client._sender.send)
+            self.executor = RpcExecutor(self.state, self._client._sender.send,
+                                        recover_keepalive=self._recover_keepalive)
             self._client._sender.send = self._intercept
             self._client._sender._keepalive_ping = self._keepalive_ping
             await self._client.connect()
@@ -118,11 +120,58 @@ class SessionClient:
     def _keepalive_ping(self, ping_id):
         """Do not declare a missing pong while its accounted ping is still pending."""
         if self._keepalive_future is None or self._keepalive_future.done():
-            MTProtoSender._keepalive_ping(self._client._sender, ping_id)
+            self._scheduling_keepalive = True
+            try:
+                MTProtoSender._keepalive_ping(self._client._sender, ping_id)
+            finally:
+                self._scheduling_keepalive = False
+
+    async def _recover_keepalive(self):
+        """Reconnect transport only; the executor holds the queue and 120-second deadline."""
+        client, sender = self._client, self._client._sender
+        logger = logging.getLogger("telegram_mcp.keepalive")
+        # Cancel both loops before yielding; no update RPC may enter during recovery.
+        for task in (client._updates_handle, client._keepalive_handle):
+            if task is not None:
+                task.cancel()
+        for attempt in range(1, 6):
+            logger.warning("Keepalive transport recovery attempt %d/5", attempt)
+            await client._disconnect()  # Telethon disconnects without closing the session.
+            if sender._disconnected.done() and not sender._disconnected.cancelled():
+                sender._disconnected.exception()  # Observe the already-handled disconnect before connect replaces it.
+            if not sender.auth_key or self.state.halted():
+                return False
+            # Telethon's automatic reconnect replays pending states and calls get_me.
+            # Use transport connect instead, discarding the failed ping and old housekeeping.
+            sender._send_queue._deque.clear()
+            sender._pending_ack.clear()
+            sender._state.reset()
+            sender._ping = None
+            sender._reconnecting = False
+            connection = client._connection(
+                client.session.server_address, client.session.port, client.session.dc_id,
+                loggers=client._log, proxy=client._proxy, local_addr=client._local_addr)
+            try:
+                # connection_retries=0 gives one Telethon connection attempt per call.
+                await asyncio.wait_for(sender.connect(connection), timeout=20)
+            except (OSError, asyncio.TimeoutError) as exc:
+                logger.warning("Keepalive transport recovery attempt %d failed: %s", attempt, type(exc).__name__)
+                if attempt < 5:
+                    await asyncio.sleep(5)
+            else:
+                if not sender._transport_connected() or self.state.halted() or self.executor.closed:
+                    return False
+                loop = asyncio.get_running_loop()
+                client._updates_handle = loop.create_task(client._update_loop())
+                client._keepalive_handle = loop.create_task(client._keepalive_loop())
+                logger.warning("Keepalive transport recovery succeeded on attempt %d", attempt)
+                return True
+        return False
 
     def _intercept(self, request, ordered=False):
         """Keep Telethon's ping marker consistent with local pre-dispatch rejection."""
-        future = self.executor.intercept(request, ordered=ordered)
+        future = self.executor.intercept(request, ordered=ordered,
+                                         background_keepalive=self._scheduling_keepalive)
         sender = self._client._sender
         if isinstance(request, functions.PingRequest) and sender._ping == request.ping_id:
             self._keepalive_future = future
@@ -144,6 +193,8 @@ class SessionClient:
     async def execute(self, operation, request):
         if not self.ready:
             return {"status": "unavailable"}
+        if self.executor.recovering:
+            return {"status": "halted" if self.state.halted() else "unavailable"}
         # No callbacks, iterators, batch requests, or automatic pagination.
         if not isinstance(request, TLRequest):
             return {"status": "invalid_request"}

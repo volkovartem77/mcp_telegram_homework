@@ -255,8 +255,10 @@ class RpcRejected(Exception):
 
 
 class RpcExecutor:
-    def __init__(self, state, send, sleep=asyncio.sleep):
+    def __init__(self, state, send, sleep=asyncio.sleep, recover_keepalive=None):
         self.state, self.send, self.sleep = state, send, sleep
+        self.recover_keepalive = recover_keepalive
+        self.recovering = False
         self.queue = asyncio.Queue(maxsize=state.config["queue_capacity"])
         self.worker = None
         self.pending = 0
@@ -306,7 +308,7 @@ class RpcExecutor:
             result.update(rate_limited_result(wait, self.state.clock()))
         return RpcRejected(result)
 
-    def intercept(self, request, ordered=False):
+    def intercept(self, request, ordered=False, background_keepalive=False):
         """Match sender.send's Future contract; never enqueue directly to Telethon."""
         loop = asyncio.get_running_loop()
         future = loop.create_future()
@@ -314,6 +316,8 @@ class RpcExecutor:
         try:
             if self.closed or self.failed or self.state.halted():
                 raise self.rejection("halted")
+            if self.recovering:
+                raise self.rejection("unavailable")
             if not isinstance(request, TLRequest):
                 raise ValueError("Exactly one Telegram request is required")
             inner = request
@@ -335,7 +339,8 @@ class RpcExecutor:
                 raise self.rejection("halted")
             if wait > self.state.config["auto_waiting_max"] or self.queue.full():
                 raise self.rejection("rate_limited", wait)
-            self.queue.put_nowait((request, ordered, operation, OPERATION_ID.get(), self.state.clock(), future))
+            self.queue.put_nowait((request, ordered, operation, OPERATION_ID.get(), self.state.clock(),
+                                   background_keepalive and type(request) is functions.PingRequest, future))
             self.pending += 1
             if self.worker is None:
                 self.worker = loop.create_task(self._work())
@@ -350,7 +355,7 @@ class RpcExecutor:
 
     async def _work(self):
         while True:
-            request, ordered, operation, operation_id, queued, future = await self.queue.get()
+            request, ordered, operation, operation_id, queued, background_keepalive, future = await self.queue.get()
             identifier = None
             try:
                 if future.cancelled():
@@ -413,12 +418,37 @@ class RpcExecutor:
                 if not future.done():
                     future.set_exception(RpcRejected({"status": status, "error": error}))
             except BaseException as exc:
+                recovery_failed = False
+                failure_audited = False
+                dispatch_error = type(exc).__name__
+                if (background_keepalive and isinstance(exc, ConnectionError)
+                        and identifier and self.recover_keepalive is not None
+                        and not self.failed and not self.closed and not self.state.halted()):
+                    self.recovering = True
+                    try:
+                        # Preserve the failed dispatch; recovery never replays it.
+                        self.state.finish(identifier, "error", type(exc).__name__)
+                        failure_audited = True
+                        async with asyncio.timeout(120):
+                            recovered = await self.recover_keepalive()
+                        if recovered and not self.failed and not self.state.halted():
+                            if not future.done():
+                                future.set_exception(RpcRejected({"status": "unavailable", "error": type(exc).__name__}))
+                            continue
+                    except asyncio.CancelledError as cancelled:
+                        exc = cancelled
+                    except Exception:
+                        pass  # Fail closed on timeout, audit failure, or unexpected recovery error.
+                    finally:
+                        self.recovering = False
+                    recovery_failed = True
                 self.failed = True
                 try:
-                    self._stop("uncertain_dispatch" if identifier else "executor_error")
-                    if identifier:
+                    self._stop("keepalive_reconnect_failed" if recovery_failed else
+                               "uncertain_dispatch" if identifier else "executor_error")
+                    if identifier and not failure_audited:
                         try:
-                            self.state.finish(identifier, "error", type(exc).__name__)
+                            self.state.finish(identifier, "error", dispatch_error)
                         except Exception:
                             pass  # HALTED is already durable; do not strand queued callers.
                 finally:
@@ -427,7 +457,7 @@ class RpcExecutor:
                         rejection.result["error"] = type(exc).__name__
                         future.set_exception(rejection)
                 if isinstance(exc, asyncio.CancelledError):
-                    raise
+                    raise exc
             finally:
                 if self.active_future is future:
                     self.active_future = None

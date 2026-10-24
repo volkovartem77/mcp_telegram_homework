@@ -168,11 +168,15 @@ budget per RPC. Waits within it execute internally; longer estimated waits retur
 `rate_limited` with `estimated_wait_seconds`, `retry_after` (seconds), and UTC
 `retry_at`. Wait at least that long before deciding whether to retry; estimates
 can change with other agents' activity. FloodWait preserves Telegram's full
-cooldown. No automatic application retries, reconnection, or pagination occur.
+cooldown. No automatic application retries or pagination occur. Only background
+ping connection failures may reconnect transport, up to five attempts within
+120 seconds, without replaying the ping or dispatching user RPCs. Failure enters
+persistent HALTED.
 Avoid parallel bursts and repeated requests while blocked.
 
 `invalid_request` requires corrected inputs; `inaccessible` is not an empty
-success. `unavailable` means the owner is not ready. `halted` requires a human:
+success. `unavailable` means the owner is not ready or is performing bounded
+keepalive transport recovery. `halted` requires a human:
 stop requesting operations and report the operation ID/error. Never run recovery,
 change limits, delete state, or launch login to bypass a block. Unexpected errors,
 uncertain timeouts, and audit failures fail closed; recovery is not an MCP tool.
