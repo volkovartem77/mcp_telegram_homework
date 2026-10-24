@@ -154,9 +154,14 @@ guarantees. History neighbors do not establish conversational membership.
 All agents/tools share one RPC queue with concurrency 1. Global and per-operation
 sliding minute/hour/day counters, progressive burst cooldowns, and FloodWait
 deadlines persist in SQLite. Operations without a named rate-limit entry use the
-configured default. Startup, session checks, and internal keepalives consume
-quota separately from tool-linked RPCs. Result page sizes do not multiply native
-RPC counts; multi-step root resolution does.
+configured default. Only actual Telethon `PingRequest` objects use the separate
+`limits.keepalive` windows (3/minute, 90/hour, 1800/day), audited as `keepalive`;
+they do not consume `internal` or `global` windows. Startup, session checks, and
+background-update RPCs retain their existing quotas. These are our protective
+limits, not official Telegram limits. Shared burst cooldowns, FloodWait, queueing,
+and HALTED still apply to pings. Result page sizes do not multiply native RPC
+counts; multi-step root resolution does. Historical audit rows retain their
+original operation labels and expire from their original windows normally.
 
 `auto_waiting_max` (currently 60 seconds) is the sole automatic queue/limiter-wait
 budget per RPC. Waits within it execute internally; longer estimated waits return

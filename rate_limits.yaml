@@ -7,6 +7,9 @@ auto_waiting_max: 60
 rpc_timeout_seconds: 30
 queue_capacity: 16
 limits:
+  # Our protective limits, not official Telegram API limits.
+  # Headroom above roughly 60 pings/hour and 1440/day.
+  keepalive: {minute: 3, hour: 90, day: 1800}
   global: {minute: 10, hour: 100, day: 500}
   default: {minute: 5, hour: 50, day: 200}
   operations:

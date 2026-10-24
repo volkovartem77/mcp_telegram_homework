@@ -78,10 +78,10 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.ping(42)
         await self.settle()
         self.sender._start_reconnect.assert_not_called()
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "ok", None)])
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "ok", None)])
         self.send.assert_awaited_once()
 
-    async def test_global_limit_and_persisted_flood_are_not_bypassed(self):
+    async def test_persisted_flood_still_blocks_ping_with_separate_budget(self):
         self.sender.send = self.owner._intercept
         self.state.config["limits"]["global"]["minute"] = 1
         await self.executor.intercept(functions.updates.GetStateRequest())
@@ -91,6 +91,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.sender._ping)
         self.assertEqual(len(self.audit()), 1)
         self.assertEqual(self.state.wait("internal"), 90)
+        self.assertEqual(self.state.wait("keepalive"), 90)
         self.send.assert_awaited_once()
 
     async def test_rejection_at_queued_dispatch_also_clears_ping(self):
@@ -125,7 +126,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sender._ping, 41)
         self.assertEqual(self.state.wait("internal"), 60)
         self.assertFalse(self.state.halted())
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "flood_wait", "FloodWaitError")])
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "flood_wait", "FloodWaitError")])
         self.send.assert_awaited_once()
 
     async def test_connection_failure_still_halts_without_retry(self):
@@ -136,7 +137,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.state.halted())
         self.assertEqual(self.state.db.execute("SELECT reason FROM state").fetchone()[0], "uncertain_dispatch")
         self.assertEqual(self.sender._ping, 41)
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "error", "ConnectionError")])
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "error", "ConnectionError")])
         self.send.assert_awaited_once()
 
     async def test_dispatched_ping_without_pong_still_triggers_reconnect(self):
@@ -162,7 +163,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
             await self.settle()
             self.assertIsNone(self.sender._ping)
         self.sender._start_reconnect.assert_not_called()
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "ok", None)] * 2)
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "ok", None)] * 2)
         self.assertEqual(self.send.await_count, 2)
 
     async def test_automatic_wait_crossing_tick_does_not_reconnect_or_duplicate_ping(self):
@@ -186,7 +187,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_awaited()
         release.set()
         await self.settle()
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "ok", None)])
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "ok", None)])
         self.assertEqual(self.state.db.execute("SELECT wait_seconds FROM rpc_audit").fetchone()[0], 10)
         # Once dispatch finishes, genuine missing-pong behavior is unchanged.
         self.ping(43)
@@ -208,5 +209,5 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         self.sender._start_reconnect.assert_not_called()
         await self.settle()
         self.assertTrue(self.state.halted())
-        self.assertEqual(self.audit(), [("internal", "PingRequest", "error", "TimeoutError")])
+        self.assertEqual(self.audit(), [("keepalive", "PingRequest", "error", "TimeoutError")])
         self.send.assert_awaited_once()

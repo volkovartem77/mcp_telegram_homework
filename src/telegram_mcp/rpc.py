@@ -12,7 +12,7 @@ import sqlite3
 import time
 
 import yaml
-from telethon import errors
+from telethon import errors, functions
 from telethon.tl.tlobject import TLRequest
 
 OPERATION = ContextVar("telegram_operation", default="internal")
@@ -44,7 +44,7 @@ def load_limits(path):
     if not isinstance(config["queue_capacity"], int):
         raise ValueError("Queue capacity must be an integer")
     limits = config["limits"]
-    for group in [limits["global"], limits["default"], *limits["operations"].values()]:
+    for group in [limits["keepalive"], limits["global"], limits["default"], *limits["operations"].values()]:
         for window in WINDOWS:
             number(group[window], 1)
             if not isinstance(group[window], int):
@@ -186,13 +186,17 @@ class RpcState:
         self.db.execute("UPDATE state SET last_time=MAX(last_time,?)", (now,))
         due = max(now, cooldown, flood)
         limits = self.config["limits"]
-        for name, group in ((None, limits["global"]), (operation, limits["operations"].get(operation, limits["default"]))):
+        groups = (("keepalive", limits["keepalive"]),) if operation == "keepalive" else (
+            (None, limits["global"]), (operation, limits["operations"].get(operation, limits["default"])))
+        for name, group in groups:
             for window, seconds in WINDOWS.items():
                 sql = "SELECT dispatched_at FROM rpc_audit WHERE dispatched_at>?"
                 args = [now - seconds]
                 if name is not None:
                     sql += " AND operation=?"
                     args.append(name)
+                else:
+                    sql += " AND operation!='keepalive'"
                 sql += " ORDER BY dispatched_at DESC LIMIT 1 OFFSET ?"
                 args.append(group[window] - 1)
                 row = self.db.execute(sql, args).fetchone()
@@ -318,6 +322,10 @@ class RpcExecutor:
             if type(inner).__module__ == "telethon.tl.functions.auth":
                 raise ValueError("Authentication RPCs are prohibited")
             operation = OPERATION.get()
+            if type(request) is functions.PingRequest:
+                operation = "keepalive"
+            elif operation == "keepalive":
+                raise ValueError("The keepalive operation is reserved for PingRequest")
             if not re.fullmatch(r"[a-z_]{1,64}", operation):
                 raise ValueError("Invalid operation label")
             wait = self.state.wait(operation)
