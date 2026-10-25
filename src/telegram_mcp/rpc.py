@@ -376,7 +376,10 @@ class RpcExecutor:
                         raise self.rejection("rate_limited", wait)
                 if future.cancelled():
                     continue
-                identifier = self.state.dispatch(operation, type(request).__name__, queued, operation_id)
+                inner = request
+                while isinstance(getattr(inner, "query", None), TLRequest):
+                    inner = inner.query
+                identifier = self.state.dispatch(operation, type(inner).__name__, queued, operation_id)
                 self.active_future = future
                 result = await asyncio.wait_for(self.send(request, ordered=ordered), self.state.config["rpc_timeout_seconds"])
                 self.state.finish(identifier, "ok")
