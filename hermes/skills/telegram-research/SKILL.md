@@ -24,11 +24,19 @@ apply even without this skill. Infrastructure diagnosis and repair are out of sc
 - When external verification is explicitly requested, web research is allowed;
   clearly distinguish its findings from Telegram evidence.
 
+## Response Style
+
+For open-ended questions, default to a short synthesis rather than a research report: give the conclusion, 2–3 strongest supporting findings with source links, and only essential caveats.
+
+Do not recount every retrieved message, repeat the conclusion, or include separate sections for minor evidence and coverage limitations. Additional evidence should inform your judgment, not automatically appear in the answer.
+
+Expand when the user explicitly requests details, or when the requested format genuinely requires them. Preserve requested lists and item counts without arbitrary shortening. For high-stakes questions, retain any qualifications essential to a safe, accurate answer.
+
 ## Procedure
 
 1. Identify the decision the user needs, location, freshness requirements, and
    useful evidence. Resolve material ambiguity briefly; do not ask the user to
-   prescribe a search plan. Set the deadline to request receipt plus 300 seconds.
+   prescribe a search plan. Use the time-budget guidance below.
 2. Reuse known marked numeric `chat_id` values. Otherwise use one small
    `list_dialogs(page_size=5)` page, then another only if needed to locate a
    relevant chat. Titles help choose chats; they are not research findings.
@@ -39,10 +47,23 @@ apply even without this skill. Infrastructure diagnosis and repair are out of sc
    Use a timezone-aware inclusive `since` only when the question warrants an age
    boundary; omission means no age restriction. Telegram matching is native,
    not semantic: try a useful spelling or synonym only when it adds coverage.
+   If a truncated word returns empty, try the complete product name before
+   concluding there are no matches; native search need not match arbitrary
+   prefixes. For Russian terms, consider е/ё spellings and a distinct product
+   synonym when the first query misses useful evidence. Compare returned message
+   IDs after a spelling variant: if е/ё queries return the same page, treat that
+   variant as redundant and spend the next call on a distinct synonym or useful
+   pagination instead. Search a distinct product synonym before descending far
+   into old matches, because newer relevant discussions may use a different noun.
+   Replace a query dominated by unrelated results with a more specific phrase;
+   do not paginate through noise.
 4. Evaluate returned text, timestamps, source links, IDs, and reply metadata
    before spending more RPCs. Distinguish a seller's claim, a firsthand report,
    hearsay, and a later correction. An old recommendation does not prove current
    availability. Keep `(chat_id, message_id)` and fetched text to avoid rereads.
+   Track the fields needed for the user's decision and choose the next read to
+   fill a concrete gap rather than merely collect more mentions. Skip banter
+   and irrelevant matches.
 5. Choose the smallest next read that resolves a concrete uncertainty:
 
    | Need | Tool and important contract |
@@ -55,7 +76,10 @@ apply even without this skill. Infrastructure diagnosis and repair are out of sc
    Use `reply_reference`, `reply_to_msg_id`, `thread_id`, `replies_count`, and
    `thread_status` to choose a path; null/unknown metadata does not establish no
    replies. A nearby history message is not necessarily part of the discussion.
-   Do not scan unrelated history to reconstruct a conversation.
+   Prefer the direct parent when it can resolve an ambiguous claim; expand the
+   thread only when needed. For a reference such as “this place” without reply
+   metadata, try one small older history page. If it does not resolve the
+   reference, preserve the uncertainty rather than scan unrelated history.
 6. Read every result's top-level status before using its payload. Reply results
    may retain a root/partial data when a later step is limited. Stop Telegram
    operations immediately on HALTED or unexpected technical failure; never
@@ -91,32 +115,36 @@ apply even without this skill. Infrastructure diagnosis and repair are out of sc
   chats automatically.
 - The shared RPC queue has concurrency one. Avoid bursts and batches of
   speculative reads. Page sizes do not multiply RPC counts, but reply-root
-  resolution does. Startup and keepalives share the budget too.
+  resolution does. Startup and background-update RPCs remain rate-limited; PingRequest uses a separate keepalive budget.
 
 ## Time Budget and Feedback
 
-The **5-minute total budget includes LLM processing and rate-limit delays**.
-Track elapsed time using available timing metadata; do not add repeated model or
-tool cycles merely to check the clock. Before another call or wait, account for
-remaining time, expected RPCs, possible limiter delays, and time to draft the
-answer. If timing is uncertain, stop conservatively with partial findings.
+Aim for a useful synthesis within roughly five minutes rather than exhaustive
+coverage. This is a planning guideline, not permission to exceed any hard limit
+in the mandatory Telegram Rules; those rules always take precedence.
+Account for processing, RPCs, cooldowns, and time to answer without repeated
+clock-check calls. Stop earlier when evidence is sufficient or the next read has
+low expected value.
 
-On `rate_limited`, wait until the returned retry deadline only if a useful next
-step and the final answer still fit. Never sleep or retry beyond the deadline,
-poll repeatedly, or switch operations to bypass limits. A retry is a new decision,
-not an automatic loop; stop if repeated waits consume the useful budget.
+On `rate_limited`, honor both `retry_at` and `retry_after`, using the later
+deadline. Retry only if a useful follow-up and final response fit within the
+applicable limits; do not poll or switch operations to evade a cooldown.
 
-If a meaningful delay is expected, send **at most one** brief progress message,
-through Hermes' normal response mechanism, explaining the reason and approximate
-time remaining. Example: "Telegram rate limits are slowing the search;
-approximately 1–2 minutes remain." Adapt the estimate to the actual remaining
-budget; never promise an exact completion time. Normal completion needs no
-progress message. Technical failure needs a concise final report, not debugging.
+If a meaningful delay is expected, send at most one brief, approximate update
+through the normal response channel. Otherwise, return findings without process
+narration.
 
 ## Verification
 
-Before answering, check that each recommendation has relevant evidence and an
-original source when available; remove duplicates and unsupported conclusions.
-State incomplete coverage, elapsed-budget limits, or the sanitized technical
-error and `operation_id` when applicable. Never spend more Telegram calls solely
-to make a report look complete.
+Before answering, verify that each material claim has relevant evidence, the
+correct context, and an original source/date when available. Remove duplicates
+and unsupported conclusions; distinguish firsthand reports, recommendations,
+and inference. Do not present historical evidence as current confirmation.
+
+Preserve requested lists, counts, and decision-relevant qualifiers. If fewer
+items meet the criteria, state the shortfall rather than pad the list or invent
+missing fields. Keep weaker leads separate from supported findings.
+
+State material coverage limits and unresolved uncertainty. On a technical stop,
+include the sanitized error and `operation_id` when available. Do not spend more
+RPCs solely to make the report look complete.
