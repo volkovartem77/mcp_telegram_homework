@@ -134,6 +134,26 @@ end, the native response may include boundary/wrong-direction entries; these are
 excluded locally. Short pages and `has_more` remain estimates, not completeness
 guarantees. History neighbors do not establish conversational membership.
 
+## search_cache(query, chat_id=None, since=None, limit=10)
+
+Local-only FTS5 search of previously fetched Telegram messages. Uses literal
+whitespace-separated AND terms, not Telegram search syntax. Optional `chat_id`
+narrows the chat; timezone-aware inclusive `since` filters message dates. Default
+limit 10, maximum 50; query maximum 4096 characters and 64 terms.
+
+Returns `messages` with text, IDs, dates, original `source_link`, `chat_title` when
+known, `last_fetched_at`, and reply/thread metadata. `missing_context` lists known
+parent/root IDs absent from the cache, not all missing replies. Use existing
+Telegram tools selectively if that context is needed. Raw Telethon JSON remains
+in the private SQLite database and is not exposed by this tool.
+
+No Telegram RPCs or quota consumption. The ordinary tool audit and HALTED checks
+still apply. Cache coverage is always partial and may be stale: neither hits nor
+misses prove current Telegram state. Existing live tools retain their behavior
+and passively save messages immediately after each successful RPC, including
+messages later filtered from their outputs. Chat metadata is updated from already
+received entities/dialogs without extra RPCs. No media is downloaded.
+
 ## Research with bounded context
 
 1. Locate the target chat with one small `list_dialogs` page; reuse known cached

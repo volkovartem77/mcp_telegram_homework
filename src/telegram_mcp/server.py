@@ -12,6 +12,7 @@ from telegram_mcp import research_tools
 from telegram_mcp.rpc import OPERATION_ID
 from telegram_mcp.paths import PROJECT_ROOT
 from telegram_mcp.session_client import SessionClient
+from telegram_mcp.message_cache import cache_options
 
 
 def load_tool_settings(path):
@@ -31,6 +32,20 @@ def validate_call(name, arguments, tool_settings=None):
     if not isinstance(arguments, dict):
         return False, {}
     sanitized = {}
+    if name == "search_cache":
+        sanitized = {"query_length": len(arguments["query"]) if isinstance(arguments.get("query"), str) else None,
+                     "since_provided": arguments.get("since") is not None}
+        if set(arguments) - {"query", "chat_id", "since", "limit"}:
+            return False, sanitized
+        try:
+            _, boundary = cache_options(arguments.get("query"), arguments.get("chat_id"),
+                                        arguments.get("since"), arguments.get("limit", 10))
+        except ValueError:
+            return False, sanitized
+        sanitized.update(chat_id=arguments.get("chat_id"), limit=arguments.get("limit", 10))
+        if boundary is not None:
+            sanitized["since"] = boundary.isoformat()
+        return True, sanitized
     if name == "read_around":
         sanitized = {"since_provided": arguments.get("since") is not None}
         if set(arguments) - {"chat_id", "message_id", "direction", "limit", "since"}:
@@ -127,7 +142,7 @@ class AuditMiddleware(Middleware):
         owner = self.runtime["owner"]
         state = owner.state
         name = context.message.name
-        known = name in {"list_dialogs", "get_message", "search_chat", "get_replies", "read_around"}
+        known = name in {"list_dialogs", "get_message", "search_chat", "get_replies", "read_around", "search_cache"}
         operation = name if known else "unknown_tool"
         identifier = None
         token = None
@@ -181,6 +196,11 @@ def create_server(session_factory=SessionClient, settings_path=None):
                 runtime.clear()
 
     server = FastMCP("Telegram MCP", lifespan=lifespan, middleware=[AuditMiddleware(runtime, tool_settings)], mask_error_details=True)
+
+    @server.tool
+    async def search_cache(query: str, chat_id: int | None = None, since: str | None = None, limit: int = 10) -> dict:
+        """Search previously fetched messages locally with FTS5 literal AND terms; limit 1-50. No Telegram RPCs. Returns original links, fetch time and known missing parent/root IDs. Cache coverage is incomplete and may be stale; HALTED still applies."""
+        return runtime["owner"].cache.search(query, chat_id, since, limit)
 
     @server.tool
     async def list_dialogs(page_size: int | None = None, cursor: str | None = None, folder_id: int = 0) -> dict:

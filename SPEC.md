@@ -102,6 +102,40 @@ For internal account/channel difference requests only, the client translates a l
 
 Session reuse, `list_dialogs`, and `get_message` have passed a minimal live check. `search_chat` passed one authorized live search for `селедка` on 2026-10-22, returning one page of 20 messages with linked MCP/RPC audits; no continuation was fetched. Reply metadata and `get_replies` passed one authorized live scenario on 2026-10-22: first metadata-bearing result 378872, one root plus four native replies, all operations audited; completeness remains explicitly unguaranteed. Tests use a mocked lifespan with network guards. `read_around` and deployment integration remain unimplemented.
 
+### Passive Message Cache
+
+`data/messages.sqlite3` (mode 0600) passively UPSERTs every actual message received
+by `search_chat`, `get_message`, `get_replies`, and `read_around`, including root
+lookups and messages subsequently filtered from tool results. Empty placeholders
+never overwrite real cached messages. No history backfill, media download, extra
+RPC, or automatic substitution of cache data into the existing tools occurs.
+
+The `(chat_id,message_id)` primary key identifies text, original message/edit
+dates, sender ID, original source link, last-fetch time, known parent/top/root
+references, reply metadata, and the complete Telethon message JSON (including
+available media descriptors). These private message contents live only in the
+cache; operational audit records still exclude message bodies and raw queries.
+Cache write failures follow the existing unexpected-error/HALTED handling rather
+than silently losing persistence. The separate `chats` table stores chat ID,
+title, username and update time from already received dialog/message entities.
+Messages join to that table by chat ID; missing titles remain unknown.
+
+`search_cache(query,chat_id=None,since=None,limit=10)` is the sixth MCP tool. FTS5
+searches literal whitespace-separated AND terms, with optional chat and inclusive
+message-date filters. The limit is 1–50; queries are bounded to 4096 characters
+and 64 terms. Results include text, original links, dates, fetch time, chat title
+when known, reply metadata, and known parent/root references absent from cache.
+Raw message JSON is not returned. Unknown replies are never inferred. Results
+are explicitly incomplete and potentially stale; an empty cache is not evidence
+of absence on Telegram. Original links identify sources, not current validity.
+
+Local search creates the usual tool audit with zero RPCs and consumes no Telegram
+quota. Existing middleware HALTED checks, safety state, session ownership, RPC
+accounting, five live tool contracts, rate limits and settings remain unchanged.
+The schema can be initialized offline; collection and new-tool discovery in a
+running Hermes integration require a manual MCP/integration restart. This does
+not clear any existing HALTED state.
+
 ### MCP Invocation Audit and Error Classification
 
 FastMCP middleware starts a durable `tool_audit` row before dispatching a tool, including invalid-parameter and unknown-tool attempts. Each call receives a UUID `operation_id`, returned to the caller and copied into every underlying `rpc_audit` row. The queue captures that ID per item to prevent cross-call leakage. Startup/internal RPCs outside a tool invocation have no tool operation ID.

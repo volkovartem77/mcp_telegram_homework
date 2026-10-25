@@ -13,7 +13,7 @@ metadata:
 
 Use for questions requiring evidence from accessible Telegram chats, including
 local recommendations, products, sellers, and discussion context. Use only the
-five Telegram MCP tools below. The always-loaded [Telegram rules](../../TELEGRAM_RULES.md)
+five live Telegram MCP tools below and the local `search_cache` MCP tool. The always-loaded [Telegram rules](../../TELEGRAM_RULES.md)
 apply even without this skill. Infrastructure diagnosis and repair are out of scope.
 
 ## Source Policy
@@ -38,6 +38,26 @@ For open-ended questions, default to a short synthesis rather than a research re
 Do not recount every retrieved message, repeat the conclusion, or include separate sections for minor evidence and coverage limitations. Additional evidence should inform your judgment, not automatically appear in the answer.
 
 Expand when the user explicitly requests details, or when the requested format genuinely requires them. Preserve requested lists and item counts without arbitrary shortening. For high-stakes questions, retain any qualifications essential to a safe, accurate answer.
+
+## Cache First
+
+Start with `search_cache(query, chat_id=None, since=None, limit=10)`. It searches
+previously fetched Telegram messages locally, without Telegram RPCs or quota use.
+Terms are literal FTS5 AND terms; `since` filters message dates, not fetch times.
+Use a known `chat_id` to narrow the search, or omit it to find relevant cached chats.
+
+Reuse cached message text, original links, and reply/thread metadata instead of
+repeating known reads. Check `last_fetched_at`; cached MCP evidence is not a new
+Telegram verification. Use `missing_context` parent/root IDs for selective
+`get_message` calls, or `get_replies` when a discussion needs further evidence.
+Do not fetch missing context merely because an ID is listed.
+
+Use live Telegram tools selectively for fresh information, unresolved context,
+and newly relevant groups. A cache miss does not establish absence from Telegram.
+Cached results are incomplete and may be stale, edited, or deleted on Telegram;
+never assume complete/current coverage or invent unknown reply IDs. Cache search
+does not bypass HALTED or any safety restriction. Keep the Source Policy and
+concise response style above when using cached evidence.
 
 ## Procedure
 

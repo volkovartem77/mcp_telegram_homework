@@ -11,6 +11,7 @@ from telethon.tl.tlobject import TLRequest
 from telegram_mcp.paths import PROJECT_ROOT, SESSION_PATH
 from telegram_mcp.rpc import OPERATION, RpcExecutor, RpcRejected, RpcState, load_limits
 from telegram_mcp.session_lock import SessionLock
+from telegram_mcp.message_cache import MessageCache
 
 
 class SessionUnavailable(RuntimeError):
@@ -54,6 +55,7 @@ class SessionClient:
         self.config_path = config_path or PROJECT_ROOT / "rate_limits.yaml"
         self.lock = SessionLock(session_path)
         self.state = self.executor = self._client = None
+        self.cache = None
         self._keepalive_future = None
         self._scheduling_keepalive = False
         self.ready = False
@@ -84,6 +86,7 @@ class SessionClient:
             self.path.chmod(0o600)
             if not self._client.session.auth_key:
                 raise SessionUnavailable("Telegram session is unauthorized; run scripts/login.py manually")
+            self.cache = MessageCache(self.state_path.with_name("messages.sqlite3"))
             self.executor = RpcExecutor(self.state, self._client._sender.send,
                                         recover_keepalive=self._recover_keepalive)
             self._client._sender.send = self._intercept
@@ -200,7 +203,12 @@ class SessionClient:
             return {"status": "invalid_request"}
         token = OPERATION.set(operation)
         try:
-            return {"status": "ok", "data": await self._client(request)}
+            data = await self._client(request)
+            if operation in {"list_dialogs", "search_chat", "get_message", "get_replies", "read_around"} and getattr(self, "cache", None) is not None:
+                messages = () if operation == "list_dialogs" else getattr(data, "messages", ())
+                thread = (utils.get_peer_id(request.peer), request.msg_id) if isinstance(request, functions.messages.GetRepliesRequest) else None
+                self.cache.save(messages, [*getattr(data, "chats", ()), *getattr(data, "users", ())], thread=thread)
+            return {"status": "ok", "data": data}
         except RpcRejected as exc:
             return exc.result
         except asyncio.CancelledError:
@@ -233,8 +241,13 @@ class SessionClient:
         finally:
             try:
                 if self.state:
-                    self.state.close()
-                    self.state = None
+                    try:
+                        if self.cache:
+                            self.cache.close()
+                            self.cache = None
+                    finally:
+                        self.state.close()
+                        self.state = None
             finally:
                 self.lock.__exit__(None, None, None)
 

@@ -11,7 +11,7 @@ from telegram_mcp.server import create_server
 
 
 class ServerSmokeTest(unittest.IsolatedAsyncioTestCase):
-    async def test_server_initializes_with_five_tools(self) -> None:
+    async def test_server_initializes_with_six_tools(self) -> None:
         @asynccontextmanager
         async def fake_session():
             yield SimpleNamespace()
@@ -19,4 +19,4 @@ class ServerSmokeTest(unittest.IsolatedAsyncioTestCase):
         with patch("socket.socket.connect", side_effect=AssertionError("Network forbidden in tests")):
             async with Client(create_server(fake_session)) as client:
                 self.assertTrue(await client.ping())
-                self.assertEqual({tool.name for tool in await client.list_tools()}, {"list_dialogs", "get_message", "search_chat", "get_replies", "read_around"})
+                self.assertEqual({tool.name for tool in await client.list_tools()}, {"list_dialogs", "get_message", "search_chat", "get_replies", "read_around", "search_cache"})
