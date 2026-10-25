@@ -24,6 +24,13 @@ apply even without this skill. Infrastructure diagnosis and repair are out of sc
 - When external verification is explicitly requested, web research is allowed;
   clearly distinguish its findings from Telegram evidence.
 
+## Evidence Integrity
+
+Report findings from Telegram chats only when supported by actual Telegram MCP
+results. If no MCP research was performed or the evidence is insufficient, say
+so honestly; do not present general knowledge or assumptions as Telegram findings.
+Never invent messages, dates, quotes, or Telegram links.
+
 ## Response Style
 
 For open-ended questions, default to a short synthesis rather than a research report: give the conclusion, 2–3 strongest supporting findings with source links, and only essential caveats.
