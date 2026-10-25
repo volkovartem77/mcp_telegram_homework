@@ -201,6 +201,10 @@ stop requesting operations and report the operation ID/error. Never run recovery
 change limits, delete state, or launch login to bypass a block. Unexpected errors,
 uncertain timeouts, and audit failures fail closed; recovery is not an MCP tool.
 
+If startup was locally rate-limited, MCP/cache stay available. Live tools report
+`startup_rate_limited` with retry timing and `manual_reload_required`; reload MCP
+after the deadline to finish startup. No connection retry or quota bypass occurs.
+
 MCP/RPC records share `operation_id`; raw queries, message text, credentials, and
 session secrets are excluded from those audits. Accounting covers admitted
 application dispatches, not all network traffic or transport-level retransmissions.

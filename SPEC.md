@@ -136,6 +136,15 @@ The schema can be initialized offline; collection and new-tool discovery in a
 running Hermes integration require a manual MCP/integration restart. This does
 not clear any existing HALTED state.
 
+A local pre-dispatch rate limit during startup no longer terminates MCP stdio.
+The Telegram client/executor are stopped while SQLite, tool auditing and the
+session ownership lock remain open. Cache search stays local and available;
+live tools return `startup_rate_limited`, a recalculated retry deadline, and
+`manual_reload_required`. Once capacity is available they return `unavailable`
+until the operator runs `/reload-mcp`; there is no automatic connection retry.
+Dispatched FloodWait, authentication errors, genuine connection failures and
+HALTED retain their existing startup/safety behavior.
+
 ### MCP Invocation Audit and Error Classification
 
 FastMCP middleware starts a durable `tool_audit` row before dispatching a tool, including invalid-parameter and unknown-tool attempts. Each call receives a UUID `operation_id`, returned to the caller and copied into every underlying `rpc_audit` row. The queue captures that ID per item to prevent cross-call leakage. Startup/internal RPCs outside a tool invocation have no tool operation ID.

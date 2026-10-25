@@ -9,7 +9,7 @@ from telethon.network.mtprotosender import MTProtoSender
 from telethon.tl.tlobject import TLRequest
 
 from telegram_mcp.paths import PROJECT_ROOT, SESSION_PATH
-from telegram_mcp.rpc import OPERATION, RpcExecutor, RpcRejected, RpcState, load_limits
+from telegram_mcp.rpc import OPERATION, RpcExecutor, RpcRejected, RpcState, load_limits, rate_limited_result
 from telegram_mcp.session_lock import SessionLock
 from telegram_mcp.message_cache import MessageCache
 
@@ -58,6 +58,8 @@ class SessionClient:
         self.cache = None
         self._keepalive_future = None
         self._scheduling_keepalive = False
+        self._startup_limited = False
+        self._startup_operation = "internal"
         self.ready = False
 
     async def __aenter__(self):
@@ -93,6 +95,7 @@ class SessionClient:
             self._client._sender._keepalive_ping = self._keepalive_ping
             await self._client.connect()
             # A raw authenticated RPC avoids is_user_authorized swallowing RPC errors.
+            self._startup_operation = "session_check"
             token = OPERATION.set("session_check")
             try:
                 await self._client(functions.updates.GetStateRequest())
@@ -101,6 +104,22 @@ class SessionClient:
             self.ready = True
             return self
         except RpcRejected as exc:
+            if exc.result.get("status") == "rate_limited" and "error" not in exc.result:
+                # A local quota rejection is not a broken MCP transport. Keep
+                # SQLite/auditing/session ownership alive, but stop Telegram.
+                try:
+                    if self.executor:
+                        await self.executor.close()
+                    if self._client:
+                        await self._client.disconnect()
+                except BaseException:
+                    await self.close()
+                    raise
+                self._startup_limited = True
+                logging.getLogger(__name__).warning(
+                    "Telegram startup deferred by local rate limit; MCP/cache remain available. Reload after %s",
+                    exc.result.get("retry_at"))
+                return self
             await self.close()
             if exc.result.get("error") in {"AuthKeyUnregisteredError", "SessionRevokedError", "SessionExpiredError", "UnauthorizedError"}:
                 raise SessionUnavailable("Telegram session is unauthorized; manual login and recovery required") from None
@@ -195,6 +214,16 @@ class SessionClient:
 
     async def execute(self, operation, request):
         if not self.ready:
+            if self._startup_limited:
+                if self.state.halted():
+                    return {"status": "halted"}
+                wait = self.state.wait(self._startup_operation)
+                if self.state.halted():
+                    return {"status": "halted"}
+                return {**rate_limited_result(wait, self.state.clock()),
+                        "status": "rate_limited" if wait > 0 else "unavailable",
+                        "reason": "startup_rate_limited", "manual_reload_required": True,
+                        "hint": "Run /reload-mcp after retry_at to complete Telegram startup. No automatic connection retry."}
             return {"status": "unavailable"}
         if self.executor.recovering:
             return {"status": "halted" if self.state.halted() else "unavailable"}
