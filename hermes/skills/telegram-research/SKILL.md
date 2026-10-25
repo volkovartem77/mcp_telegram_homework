@@ -16,6 +16,14 @@ local recommendations, products, sellers, and discussion context. Use only the
 five Telegram MCP tools below. The always-loaded [Telegram rules](../../TELEGRAM_RULES.md)
 apply even without this skill. Infrastructure diagnosis and repair are out of scope.
 
+## Source Policy
+
+- For Telegram research, use Telegram MCP exclusively by default.
+- Do not use web search or external sources unless the user explicitly requests them.
+- If Telegram evidence is insufficient, say so. Never search the web just to fill gaps.
+- When external verification is explicitly requested, web research is allowed;
+  clearly distinguish its findings from Telegram evidence.
+
 ## Procedure
 
 1. Identify the decision the user needs, location, freshness requirements, and
