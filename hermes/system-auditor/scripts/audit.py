@@ -8,8 +8,8 @@ import re
 import sqlite3
 import time
 
-HOME = Path('/home/ubuntu/.hermes')
-PROJECT = Path('/home/ubuntu/mcp_telegram_homework')
+HOME = Path.home() / '.hermes'
+PROJECT = Path.home() / 'mcp_telegram_homework'
 UUID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 STAMP = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})')
 TOOLS = ('list_dialogs', 'get_message', 'search_chat', 'get_replies', 'read_around')

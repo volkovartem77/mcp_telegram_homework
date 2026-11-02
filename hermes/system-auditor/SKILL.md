@@ -24,19 +24,19 @@ arbitrary terminal commands, scripts, SQL, Python snippets, or file readers to
 expand an audit. The helper reads fixed local sources independently of MCP:
 
 ```sh
-/home/ubuntu/mcp_telegram_homework/venv/bin/python /home/ubuntu/.hermes/skills/system-auditor/scripts/audit.py latest-incident
+$HOME/mcp_telegram_homework/venv/bin/python $HOME/.hermes/skills/system-auditor/scripts/audit.py latest-incident
 ```
 
 For the latest completed foreground Telegram request, including success:
 
 ```sh
-/home/ubuntu/mcp_telegram_homework/venv/bin/python /home/ubuntu/.hermes/skills/system-auditor/scripts/audit.py last-request
+$HOME/mcp_telegram_homework/venv/bin/python $HOME/.hermes/skills/system-auditor/scripts/audit.py last-request
 ```
 
 For RPC quota consumption, use this fixed read-only command:
 
 ```sh
-/home/ubuntu/mcp_telegram_homework/venv/bin/python /home/ubuntu/.hermes/skills/system-auditor/scripts/audit.py rpc-usage --operation internal --hours 24
+$HOME/mcp_telegram_homework/venv/bin/python $HOME/.hermes/skills/system-auditor/scripts/audit.py rpc-usage --operation internal --hours 24
 ```
 
 `--hours` is a positive integer, default 24: a rolling window ending at the
@@ -103,7 +103,7 @@ Answer concisely in the user's language, with a small metrics/timeline table if
 useful. No raw log dumps, private chat content, tokens, credentials or session data.
 For an explicitly requested long report, append `--report` to the same single
 command: its only write is a sanitized `.txt` report under
-`/home/ubuntu/.hermes/cache/system-auditor/`. Attach only the returned `report_path`
+`~/.hermes/cache/system-auditor/`. Attach only the returned `report_path`
 using Hermes' existing final-response `MEDIA:/absolute/path` syntax, with a short
 summary. This uses the existing bot response transport, never Telegram MCP.
 Do not upload source logs, databases, configs, or any other files.
